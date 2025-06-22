@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# Script to retrieve Pokémon data from PokeAPI for Pikachu.
+# Saves successful responses to data.json and logs errors to errors.txt.
+
+# Define the Pokémon name
+POKEMON_NAME="pikachu"
+
+# Define the API URL
+API_URL="https://pokeapi.co/api/v2/pokemon/${POKEMON_NAME}/"
+
+# Define the output file for successful data
+DATA_FILE="data.json"
+
+# Define the error log file
+ERROR_FILE="errors.txt"
+
+echo "Attempting to retrieve data for $POKEMON_NAME from $API_URL..."
+
+# Make the API request using curl and save the output to DATA_FILE.
+# -s: Silent mode (don't show progress meter or error messages)
+# -o: Write output to a file instead of stdout
+# -w "%{http_code}": Output the HTTP status code after the transfer
+HTTP_STATUS=$(curl -s -o "$DATA_FILE" -w "%{http_code}" "$API_URL")
+
+# Check the HTTP status code
+if [ "$HTTP_STATUS" -eq 200 ]; then
+    echo "Successfully retrieved data for $POKEMON_NAME. Data saved to $DATA_FILE"
+else
+    # If request failed, log the error with a timestamp
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+    ERROR_MESSAGE="[$TIMESTAMP] Failed to retrieve data for $POKEMON_NAME. HTTP Status: $HTTP_STATUS"
+
+    # If curl outputted an empty file or error, log that too
+    if [ ! -s "$DATA_FILE" ]; then
+        ERROR_MESSAGE+=". No data written to $DATA_FILE (file is empty or not created)."
+    fi
+
+    echo "$ERROR_MESSAGE" | tee -a "$ERROR_FILE" >&2
+    echo "Error details logged to $ERROR_FILE"
+    # Clean up potentially incomplete or error-filled data.json
+    rm -f "$DATA_FILE"
+fi
