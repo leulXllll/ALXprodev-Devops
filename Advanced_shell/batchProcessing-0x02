@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Script to retrieve Pokémon data from PokeAPI for a list of Pokémon.
+# Each Pokémon's data is saved to a separate JSON file in a dedicated directory.
+
+# Define the list of Pokémon names to fetch
+POKEMON_LIST=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
+
+# Define the base API URL
+BASE_API_URL="https://pokeapi.co/api/v2/pokemon/"
+
+# Define the directory to save the Pokémon data
+OUTPUT_DIR="pokemon_data"
+
+# Define the delay between requests in seconds to prevent rate-limiting issues
+REQUEST_DELAY=1
+
+echo "Starting data retrieval for multiple Pokémon..."
+
+# Create the output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Loop through each Pokémon in the list
+for POKEMON_NAME in "${POKEMON_LIST[@]}"; do
+    API_URL="${BASE_API_URL}${POKEMON_NAME}/"
+    DATA_FILE="${OUTPUT_DIR}/${POKEMON_NAME}.json"
+    ERROR_FILE="${OUTPUT_DIR}/errors.log" # Log errors specific to this script run
+
+    echo "Fetching data for $POKEMON_NAME..."
+
+    # Make the API request using curl and save the output.
+    # -s: Silent mode (don't show progress meter or error messages)
+    # -o: Write output to a file instead of stdout
+    # -w "%{http_code}": Output the HTTP status code after the transfer
+    HTTP_STATUS=$(curl -s -o "$DATA_FILE" -w "%{http_code}" "$API_URL")
+
+    # Check the HTTP status code
+    if [ "$HTTP_STATUS" -eq 200 ]; then
+        echo "Saved data to $DATA_FILE ✅"
+    else
+        # If request failed, log the error with a timestamp
+        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+        ERROR_MESSAGE="[$TIMESTAMP] Failed to retrieve data for $POKEMON_NAME. HTTP Status: $HTTP_STATUS"
+
+        # If curl outputted an empty file or error, log that too
+        if [ ! -s "$DATA_FILE" ]; then
+            ERROR_MESSAGE+=". No data written to $DATA_FILE (file is empty or not created)."
+        fi
+
+        echo "$ERROR_MESSAGE" | tee -a "$ERROR_FILE" >&2
+        echo "Failed to fetch data for $POKEMON_NAME. Details logged to $ERROR_FILE ❌"
+        # Clean up potentially incomplete or error-filled data file
+        rm -f "$DATA_FILE"
+    fi
+
+    # Add a delay between requests to avoid hitting API rate limits
+    sleep "$REQUEST_DELAY"
+done
+
+echo "Data retrieval process completed."
