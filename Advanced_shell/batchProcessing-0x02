@@ -2,6 +2,7 @@
 
 # Script to retrieve Pokémon data from PokeAPI for a list of Pokémon.
 # Each Pokémon's data is saved to a separate JSON file in a dedicated directory.
+# Includes robust error handling with retry logic for API requests.
 
 # Define the list of Pokémon names to fetch
 POKEMON_LIST=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
@@ -12,8 +13,12 @@ BASE_API_URL="https://pokeapi.co/api/v2/pokemon/"
 # Define the directory to save the Pokémon data
 OUTPUT_DIR="pokemon_data"
 
-# Define the delay between requests in seconds to prevent rate-limiting issues
+# Define the delay between successful requests in seconds to prevent rate-limiting issues
 REQUEST_DELAY=1
+
+# Define retry parameters
+MAX_RETRIES=3       # Maximum number of times to retry a failed request
+RETRY_DELAY=2       # Delay in seconds between retries
 
 echo "Starting data retrieval for multiple Pokémon..."
 
@@ -28,32 +33,48 @@ for POKEMON_NAME in "${POKEMON_LIST[@]}"; do
 
     echo "Fetching data for $POKEMON_NAME..."
 
-    # Make the API request using curl and save the output.
-    # -s: Silent mode (don't show progress meter or error messages)
-    # -o: Write output to a file instead of stdout
-    # -w "%{http_code}": Output the HTTP status code after the transfer
-    HTTP_STATUS=$(curl -s -o "$DATA_FILE" -w "%{http_code}" "$API_URL")
+    ATTEMPT=0
+    SUCCESS=false
 
-    # Check the HTTP status code
-    if [ "$HTTP_STATUS" -eq 200 ]; then
-        echo "Saved data to $DATA_FILE ✅"
-    else
-        # If request failed, log the error with a timestamp
-        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-        ERROR_MESSAGE="[$TIMESTAMP] Failed to retrieve data for $POKEMON_NAME. HTTP Status: $HTTP_STATUS"
+    # Retry loop for API requests
+    while [ "$ATTEMPT" -lt "$MAX_RETRIES" ]; do
+        ATTEMPT=$((ATTEMPT + 1))
+        
+        # Make the API request using curl and save the output.
+        # -s: Silent mode (don't show progress meter or error messages)
+        # -o: Write output to a file instead of stdout
+        # -w "%{http_code}": Output the HTTP status code after the transfer
+        # --fail: Fail silently (no output at all) on server errors (HTTP status >= 400)
+        HTTP_STATUS=$(curl -s -o "$DATA_FILE" -w "%{http_code}" "$API_URL")
 
-        # If curl outputted an empty file or error, log that too
-        if [ ! -s "$DATA_FILE" ]; then
-            ERROR_MESSAGE+=". No data written to $DATA_FILE (file is empty or not created)."
+        # Check the HTTP status code
+        if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "Saved data to $DATA_FILE ✅ (Attempt $ATTEMPT)"
+            SUCCESS=true
+            break # Exit retry loop on success
+        else
+            TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+            ERROR_MESSAGE="[$TIMESTAMP] Attempt $ATTEMPT/$MAX_RETRIES: Failed to retrieve data for $POKEMON_NAME. HTTP Status: $HTTP_STATUS"
+            
+            # If curl outputted an empty file or error, log that too
+            if [ ! -s "$DATA_FILE" ]; then
+                ERROR_MESSAGE+=". No data written to $DATA_FILE (file empty or not created)."
+            fi
+            
+            echo "$ERROR_MESSAGE" | tee -a "$ERROR_FILE" >&2
+            echo "Retrying $POKEMON_NAME in $RETRY_DELAY seconds..."
+            # Clean up potentially incomplete or error-filled data file before retrying
+            rm -f "$DATA_FILE"
+            sleep "$RETRY_DELAY"
         fi
+    done
 
-        echo "$ERROR_MESSAGE" | tee -a "$ERROR_FILE" >&2
-        echo "Failed to fetch data for $POKEMON_NAME. Details logged to $ERROR_FILE ❌"
-        # Clean up potentially incomplete or error-filled data file
-        rm -f "$DATA_FILE"
+    # If all retries failed for the current Pokémon
+    if [ "$SUCCESS" = false ]; then
+        echo "Failed to fetch data for $POKEMON_NAME after $MAX_RETRIES attempts. Skipping. ❌"
     fi
 
-    # Add a delay between requests to avoid hitting API rate limits
+    # Add a delay between requests (after successful fetch or final failure)
     sleep "$REQUEST_DELAY"
 done
 
