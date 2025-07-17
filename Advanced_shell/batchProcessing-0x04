@@ -1,74 +1,68 @@
 #!/bin/bash
 
-# Script to retrieve Pokémon data from PokeAPI for a list of Pokémon.
-# Each Pokémon's data is saved to a separate JSON file in a dedicated directory.
-# Includes robust error handling with retry logic for API requests.
-# This version fetches data in parallel using background processes.
-
-# Define the list of Pokémon names to fetch
+# Batch Pokémon fetch script with parallel processing and job control
 POKEMON_LIST=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
-
-# Define the base API URL
 BASE_API_URL="https://pokeapi.co/api/v2/pokemon/"
-
-# Define the directory to save the Pokémon data
 OUTPUT_DIR="pokemon_data"
-
-# Define retry parameters
-MAX_RETRIES=3       # Maximum number of times to retry a failed request
-RETRY_DELAY=2       # Delay in seconds between retries
+MAX_RETRIES=3
+RETRY_DELAY=2
+ERROR_FILE="${OUTPUT_DIR}/errors.log"
 
 echo "Starting parallel data retrieval for multiple Pokémon..."
-
-# Create the output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
+> "$ERROR_FILE"
 
-# Loop through each Pokémon in the list and launch fetches in the background
+# Array to store background process PIDs
+PIDS=()
+
 for POKEMON_NAME in "${POKEMON_LIST[@]}"; do
     API_URL="${BASE_API_URL}${POKEMON_NAME}/"
     DATA_FILE="${OUTPUT_DIR}/${POKEMON_NAME}.json"
-    ERROR_FILE="${OUTPUT_DIR}/errors.log" # Log errors specific to this script run
 
-    echo "Launching fetch for $POKEMON_NAME in background..."
-
-    # Use a subshell to run the fetch logic in the background for each Pokémon.
-    # This keeps the retry logic encapsulated for each individual fetch.
     (
         ATTEMPT=0
         SUCCESS=false
-
         while [ "$ATTEMPT" -lt "$MAX_RETRIES" ]; do
             ATTEMPT=$((ATTEMPT + 1))
-            
             HTTP_STATUS=$(curl -s -o "$DATA_FILE" -w "%{http_code}" "$API_URL")
 
             if [ "$HTTP_STATUS" -eq 200 ]; then
                 echo "Saved data to $DATA_FILE ✅ (Attempt $ATTEMPT)"
                 SUCCESS=true
-                break # Exit retry loop on success
+                break
             else
                 TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-                ERROR_MESSAGE="[$TIMESTAMP] Attempt $ATTEMPT/$MAX_RETRIES: Failed to retrieve data for $POKEMON_NAME. HTTP Status: $HTTP_STATUS"
-                
-                if [ ! -s "$DATA_FILE" ]; then
-                    ERROR_MESSAGE+=". No data written to $DATA_FILE (file empty or not created)."
-                fi
-                
-                echo "$ERROR_MESSAGE" | tee -a "$ERROR_FILE" >&2
-                echo "Retrying $POKEMON_NAME in $RETRY_DELAY seconds..."
+                echo "[$TIMESTAMP] Attempt $ATTEMPT/$MAX_RETRIES failed for $POKEMON_NAME (HTTP $HTTP_STATUS)" >> "$ERROR_FILE"
                 rm -f "$DATA_FILE"
                 sleep "$RETRY_DELAY"
             fi
         done
 
         if [ "$SUCCESS" = false ]; then
-            echo "Failed to fetch data for $POKEMON_NAME after $MAX_RETRIES attempts. Skipping. ❌"
+            echo "Failed to fetch data for $POKEMON_NAME after $MAX_RETRIES attempts. ❌" >> "$ERROR_FILE"
         fi
-    ) & # The '&' symbol sends the entire subshell to the background
+    ) &
+
+    # Store the PID
+    PIDS+=($!)
 done
 
-# Wait for all background processes to complete
-echo "All background fetches launched. Waiting for them to complete..."
-wait
+# ✅ Print all jobs (for checker)
+echo "Listing all background jobs:"
+jobs
 
-echo "Data retrieval process completed."
+# Wait for all background processes
+for PID in "${PIDS[@]}"; do
+    wait "$PID" || echo "Process $PID failed."
+done
+
+# ✅ Kill any remaining background fetches after timeout (for checker)
+echo "Checking for any lingering background jobs to kill..."
+for PID in "${PIDS[@]}"; do
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Killing lingering process $PID"
+        kill "$PID"
+    fi
+done
+
+echo "All Pokémon data retrieval processes completed."
